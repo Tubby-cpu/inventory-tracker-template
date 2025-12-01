@@ -1,290 +1,218 @@
-from collections import defaultdict
-from pathlib import Path
-import sqlite3
-
 import streamlit as st
-import altair as alt
 import pandas as pd
+import sqlite3
+from datetime import datetime
+import hashlib
 
+# ====================== CONFIG ======================
+st.set_page_config(page_title="Clinic Inventory Pro", layout="wide")
+DB_PATH = "inventory.db"
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title="Inventory tracker",
-    page_icon=":shopping_bags:",  # This is an emoji shortcode. Could be a URL too.
-)
+# ====================== USERS ======================
+USERS = {
+    "admin": {"password": hashlib.sha256("admin123".encode()).hexdigest(), "role": "admin", "clinic": "All"},
+    "clinic1": {"password": hashlib.sha256("clinic1pass".encode()).hexdigest(), "role": "user", "clinic": "Clinic 1 - Nairobi"},
+    "clinic2": {"password": hashlib.sha256("clinic2pass".encode()).hexdigest(), "role": "user", "clinic": "Clinic 2 - Mombasa"},
+    "clinic3": {"password": hashlib.sha256("clinic3pass".encode()).hexdigest(), "role": "user", "clinic": "Clinic 3 - Kisumu"},
+    "clinic4": {"password": hashlib.sha256("clinic4pass".encode()).hexdigest(), "role": "user", "clinic": "Clinic 4 - Nakuru"},
+    "clinic5": {"password": hashlib.sha256("clinic5pass".encode()).hexdigest(), "role": "user", "clinic": "Clinic 5 - Eldoret"},
+    "clinic6": {"password": hashlib.sha256("clinic6pass".encode()).hexdigest(), "role": "user", "clinic": "Clinic 6 - Thika"},
+    "clinic7": {"password": hashlib.sha256("clinic7pass".encode()).hexdigest(), "role": "user", "clinic": "Clinic 7 - Machakos"},
+}
 
-
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
-
-
-def connect_db():
-    """Connects to the sqlite database."""
-
-    DB_FILENAME = Path(__file__).parent / "inventory.db"
-    db_already_exists = DB_FILENAME.exists()
-
-    conn = sqlite3.connect(DB_FILENAME)
-    db_was_just_created = not db_already_exists
-
-    return conn, db_was_just_created
-
-
-def initialize_data(conn):
-    """Initializes the inventory table with some data."""
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS inventory (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_name TEXT,
-            price REAL,
-            units_sold INTEGER,
-            units_left INTEGER,
-            cost_price REAL,
-            reorder_point INTEGER,
-            description TEXT
-        )
-        """
-    )
-
-    cursor.execute(
-        """
-        INSERT INTO inventory
-            (item_name, price, units_sold, units_left, cost_price, reorder_point, description)
-        VALUES
-            -- Beverages
-            ('Bottled Water (500ml)', 1.50, 115, 15, 0.80, 16, 'Hydrating bottled water'),
-            ('Soda (355ml)', 2.00, 93, 8, 1.20, 10, 'Carbonated soft drink'),
-            ('Energy Drink (250ml)', 2.50, 12, 18, 1.50, 8, 'High-caffeine energy drink'),
-            ('Coffee (hot, large)', 2.75, 11, 14, 1.80, 5, 'Freshly brewed hot coffee'),
-            ('Juice (200ml)', 2.25, 11, 9, 1.30, 5, 'Fruit juice blend'),
-
-            -- Snacks
-            ('Potato Chips (small)', 2.00, 34, 16, 1.00, 10, 'Salted and crispy potato chips'),
-            ('Candy Bar', 1.50, 6, 19, 0.80, 15, 'Chocolate and candy bar'),
-            ('Granola Bar', 2.25, 3, 12, 1.30, 8, 'Healthy and nutritious granola bar'),
-            ('Cookies (pack of 6)', 2.50, 8, 8, 1.50, 5, 'Soft and chewy cookies'),
-            ('Fruit Snack Pack', 1.75, 5, 10, 1.00, 8, 'Assortment of dried fruits and nuts'),
-
-            -- Personal Care
-            ('Toothpaste', 3.50, 1, 9, 2.00, 5, 'Minty toothpaste for oral hygiene'),
-            ('Hand Sanitizer (small)', 2.00, 2, 13, 1.20, 8, 'Small sanitizer bottle for on-the-go'),
-            ('Pain Relievers (pack)', 5.00, 1, 5, 3.00, 3, 'Over-the-counter pain relief medication'),
-            ('Bandages (box)', 3.00, 0, 10, 2.00, 5, 'Box of adhesive bandages for minor cuts'),
-            ('Sunscreen (small)', 5.50, 6, 5, 3.50, 3, 'Small bottle of sunscreen for sun protection'),
-
-            -- Household
-            ('Batteries (AA, pack of 4)', 4.00, 1, 5, 2.50, 3, 'Pack of 4 AA batteries'),
-            ('Light Bulbs (LED, 2-pack)', 6.00, 3, 3, 4.00, 2, 'Energy-efficient LED light bulbs'),
-            ('Trash Bags (small, 10-pack)', 3.00, 5, 10, 2.00, 5, 'Small trash bags for everyday use'),
-            ('Paper Towels (single roll)', 2.50, 3, 8, 1.50, 5, 'Single roll of paper towels'),
-            ('Multi-Surface Cleaner', 4.50, 2, 5, 3.00, 3, 'All-purpose cleaning spray'),
-
-            -- Others
-            ('Lottery Tickets', 2.00, 17, 20, 1.50, 10, 'Assorted lottery tickets'),
-            ('Newspaper', 1.50, 22, 20, 1.00, 5, 'Daily newspaper')
-        """
-    )
+# ====================== DATABASE ======================
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS medicines (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clinic TEXT NOT NULL,
+                    drug_name TEXT NOT NULL,
+                    generic_name TEXT,
+                    strength TEXT,
+                    batch_no TEXT,
+                    expiry_date DATE,
+                    quantity INTEGER,
+                    low_stock_threshold INTEGER DEFAULT 20,
+                    date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS transactions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clinic TEXT,
+                    drug_id INTEGER,
+                    type TEXT,
+                    quantity INTEGER,
+                    patient_name TEXT,
+                    remarks TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     conn.commit()
+    conn.close()
+init_db()
 
+# ====================== AUTH ======================
+def login():
+    if "user" not in st.session_state:
+        st.sidebar.title("Login")
+        username = st.sidebar.text_input("Username")
+        password = st.sidebar.text_input("Password", type="password")
+        if st.sidebar.button("Login"):
+            hashed = hashlib.sha256(password.encode()).hexdigest()
+            if username in USERS and USERS[username]["password"] == hashed:
+                st.session_state.user = username
+                st.session_state.role = USERS[username]["role"]
+                st.session_state.clinic = USERS[username]["clinic"]
+                st.rerun()
+            else:
+                st.sidebar.error("Wrong credentials")
+        st.stop()
 
-def load_data(conn):
-    """Loads the inventory data from the database."""
-    cursor = conn.cursor()
+login()
+st.sidebar.success(f"Logged in: {st.session_state.user}")
+st.sidebar.write(f"**{st.session_state.clinic}**")
+if st.sidebar.button("Logout"):
+    st.session_state.clear()
+    st.rerun()
 
-    try:
-        cursor.execute("SELECT * FROM inventory")
-        data = cursor.fetchall()
-    except:
-        return None
-
-    df = pd.DataFrame(
-        data,
-        columns=[
-            "id",
-            "item_name",
-            "price",
-            "units_sold",
-            "units_left",
-            "cost_price",
-            "reorder_point",
-            "description",
-        ],
-    )
-
+# ====================== HELPERS ======================
+def get_df(clinic_filter=None):
+    conn = sqlite3.connect(DB_PATH)
+    if clinic_filter and clinic_filter != "All":
+        df = pd.read_sql_query("SELECT * FROM medicines WHERE clinic = ?", conn, params=(clinic_filter,))
+    else:
+        df = pd.read_sql_query("SELECT * FROM medicines", conn)
+    conn.close()
+    if not df.empty:
+        df["expiry_date"] = pd.to_datetime(df["expiry_date"])
     return df
 
-
-def update_data(conn, df, changes):
-    """Updates the inventory data in the database."""
-    cursor = conn.cursor()
-
-    if changes["edited_rows"]:
-        deltas = st.session_state.inventory_table["edited_rows"]
-        rows = []
-
-        for i, delta in deltas.items():
-            row_dict = df.iloc[i].to_dict()
-            row_dict.update(delta)
-            rows.append(row_dict)
-
-        cursor.executemany(
-            """
-            UPDATE inventory
-            SET
-                item_name = :item_name,
-                price = :price,
-                units_sold = :units_sold,
-                units_left = :units_left,
-                cost_price = :cost_price,
-                reorder_point = :reorder_point,
-                description = :description
-            WHERE id = :id
-            """,
-            rows,
-        )
-
-    if changes["added_rows"]:
-        cursor.executemany(
-            """
-            INSERT INTO inventory
-                (id, item_name, price, units_sold, units_left, cost_price, reorder_point, description)
-            VALUES
-                (:id, :item_name, :price, :units_sold, :units_left, :cost_price, :reorder_point, :description)
-            """,
-            (defaultdict(lambda: None, row) for row in changes["added_rows"]),
-        )
-
-    if changes["deleted_rows"]:
-        cursor.executemany(
-            "DELETE FROM inventory WHERE id = :id",
-            ({"id": int(df.loc[i, "id"])} for i in changes["deleted_rows"]),
-        )
-
+def add_transaction(clinic, drug_id, type_, qty, patient="", remarks=""):
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("INSERT INTO transactions (clinic, drug_id, type, quantity, patient_name, remarks) VALUES (?,?,?,?,?,?)",
+                 (clinic, drug_id, type_, qty, patient, remarks))
     conn.commit()
+    conn.close()
 
+# ====================== MAIN ======================
+st.title("Clinic Inventory Pro")
 
-# -----------------------------------------------------------------------------
-# Draw the actual page, starting with the inventory table.
+role = st.session_state.role
+user_clinic = st.session_state.clinic
 
-# Set the title that appears at the top of the page.
-"""
-# :shopping_bags: Inventory tracker
+if role == "admin":
+    clinic_options = ["All", "Clinic 1 - Nairobi", "Clinic 2 - Mombasa", "Clinic 3 - Kisumu",
+                      "Clinic 4 - Nakuru", "Clinic 5 - Eldoret", "Clinic 6 - Thika", "Clinic 7 - Machakos"]
+    selected_clinic = st.selectbox("View Clinic", clinic_options)
+else:
+    selected_clinic = user_clinic
 
-**Welcome to Alice's Corner Store's intentory tracker!**
-This page reads and writes directly from/to our inventory database.
-"""
+df = get_df("All" if (role == "admin" and selected_clinic == "All") else selected_clinic)
 
-st.info(
-    """
-    Use the table below to add, remove, and edit items.
-    And don't forget to commit your changes when you're done.
-    """
-)
+tab1, tab2, tab3, tab4 = st.tabs(["Current Stock", "Receive Stock", "Issue Stock", "Reports"])
 
-# Connect to database and create table if needed
-conn, db_was_just_created = connect_db()
+# ───── TAB 1: CURRENT STOCK (FIXED FOREVER) ─────
+with tab1:
+    st.subheader(f"Stock – {selected_clinic}")
 
-# Initialize data.
-if db_was_just_created:
-    initialize_data(conn)
-    st.toast("Database initialized with some sample data.")
+    if df.empty:
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Expired", 0); col2.metric("Near Expiry", 0); col3.metric("Low Stock", 0)
+        st.info("No medicines yet — go to 'Receive Stock' to add some")
+    else:
+        today = pd.to_datetime("today").normalize()
+        df["days_to_expiry"] = (df["expiry_date"] - today).dt.days
 
-# Load data from database
-df = load_data(conn)
+        # Calculate status safely
+        df["status"] = "normal"
+        df.loc[df["quantity"] <= df["low_stock_threshold"], "status"] = "low_stock"
+        df.loc[df["days_to_expiry"] <= 90, "status"] = "near_expiry"
+        df.loc[df["days_to_expiry"] <= 0, "status"] = "expired"
 
-# Display data with editable table
-edited_df = st.data_editor(
-    df,
-    disabled=["id"],  # Don't allow editing the 'id' column.
-    num_rows="dynamic",  # Allow appending/deleting rows.
-    column_config={
-        # Show dollar sign before price columns.
-        "price": st.column_config.NumberColumn(format="$%.2f"),
-        "cost_price": st.column_config.NumberColumn(format="$%.2f"),
-    },
-    key="inventory_table",
-)
+        # Metrics
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Expired", len(df[df["status"] == "expired"]))
+        c2.metric("Near Expiry (<90 days)", len(df[df["status"] == "near_expiry"]))
+        c3.metric("Low Stock", len(df[df["status"] == "low_stock"]))
 
-has_uncommitted_changes = any(len(v) for v in st.session_state.inventory_table.values())
+        # Prepare display dataframe and keep status for coloring
+        display = df[["drug_name", "generic_name", "strength", "batch_no", "expiry_date", "quantity", "low_stock_threshold"]].copy()
+        display["expiry_date"] = display["expiry_date"].dt.strftime("%Y-%m-%d")
 
-st.button(
-    "Commit changes",
-    type="primary",
-    disabled=not has_uncommitted_changes,
-    # Update data in database
-    on_click=update_data,
-    args=(conn, df, st.session_state.inventory_table),
-)
+        # THIS IS THE FIX: pass the status as a separate list that matches display rows
+        status_list = df["status"].tolist()
 
+        def highlight_row(row):
+            status = status_list[row.name]
+            if status == "expired":     return ["background: #ffcccc"] * len(row)
+            if status == "near_expiry": return ["background: #ffffcc"] * len(row)
+            if status == "low_stock":   return ["background: #ffcc99"] * len(row)
+            return [""] * len(row)
 
-# -----------------------------------------------------------------------------
-# Now some cool charts
+        st.dataframe(display.style.apply(highlight_row, axis=1), use_container_width=True)
 
-# Add some space
-""
-""
-""
+# ───── TAB 2: RECEIVE STOCK ─────
+with tab2:
+    st.subheader("Receive New Stock")
+    with st.form("receive"):
+        drug_name = st.text_input("Drug Name *")
+        generic   = st.text_input("Generic Name (optional)")
+        strength  = st.text_input("Strength e.g. 500mg")
+        batch     = st.text_input("Batch Number *")
+        expiry    = st.date_input("Expiry Date", min_value=datetime.today())
+        qty       = st.number_input("Quantity", min_value=1)
+        threshold = st.number_input("Low-stock alert", value=20)
+        submitted = st.form_submit_button("Add Stock")
+        if submitted:
+            if not drug_name or not batch:
+                st.error("Drug name and batch number required")
+            else:
+                conn = sqlite3.connect(DB_PATH)
+                conn.execute("""INSERT INTO medicines 
+                    (clinic, drug_name, generic_name, strength, batch_no, expiry_date, quantity, low_stock_threshold)
+                    VALUES (?,?,?,?,?,?,?,?)""",
+                    (selected_clinic, drug_name, generic, strength, batch, expiry, qty, threshold))
+                drug_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                conn.commit()
+                conn.close()
+                add_transaction(selected_clinic, drug_id, "in", qty, remarks=f"Received {batch}")
+                st.success(f"Added {qty} × {drug_name}")
+                st.balloons()
+                st.rerun()
 
-st.subheader("Units left", divider="red")
+# ───── TAB 3: ISSUE STOCK ─────
+with tab3:
+    st.subheader("Issue Medicine")
+    if df.empty:
+        st.info("No stock available")
+    else:
+        df["option"] = (df["drug_name"] + " | " + df["batch_no"] +
+                        " | Exp: " + df["expiry_date"].dt.strftime("%b %Y") +
+                        " | Stock: " + df["quantity"].astype(str))
+        choice = st.selectbox("Select medicine", df["option"])
+        selected_row = df[df["option"] == choice].iloc[0]
 
-need_to_reorder = df[df["units_left"] < df["reorder_point"]].loc[:, "item_name"]
+        col1, col2 = st.columns(2)
+        col1.write(f"**Available:** {selected_row.quantity}")
+        issue_qty = col2.number_input("Qty to issue", min_value=1, max_value=int(selected_row.quantity))
 
-if len(need_to_reorder) > 0:
-    items = "\n".join(f"* {name}" for name in need_to_reorder)
+        patient = st.text_input("Patient name (optional)")
+        remarks = st.text_input("Remarks")
 
-    st.error(f"We're running dangerously low on the items below:\n {items}")
+        if st.button("Issue Medicine", type="primary"):
+            new_qty = selected_row.quantity - issue_qty
+            conn = sqlite3.connect(DB_PATH)
+            conn.execute("UPDATE medicines SET quantity = ? WHERE id = ?", (new_qty, selected_row.id))
+            conn.commit()
+            conn.close()
+            add_transaction(selected_clinic, selected_row.id, "out", issue_qty, patient, remarks)
+            st.success(f"Issued {issue_qty} × {selected_row.drug_name}")
+            st.rerun()
 
-""
-""
+# ───── TAB 4: REPORTS ─────
+with tab4:
+    st.subheader("Export")
+    if not df.empty:
+        csv = df.to_csv(index=False).encode()
+        st.download_button("Download current stock (CSV)", csv, "stock.csv", "text/csv")
+    else:
+        st.info("No data yet")
 
-st.altair_chart(
-    # Layer 1: Bar chart.
-    alt.Chart(df)
-    .mark_bar(
-        orient="horizontal",
-    )
-    .encode(
-        x="units_left",
-        y="item_name",
-    )
-    # Layer 2: Chart showing the reorder point.
-    + alt.Chart(df)
-    .mark_point(
-        shape="diamond",
-        filled=True,
-        size=50,
-        color="salmon",
-        opacity=1,
-    )
-    .encode(
-        x="reorder_point",
-        y="item_name",
-    ),
-    use_container_width=True,
-)
-
-st.caption("NOTE: The :diamonds: location shows the reorder point.")
-
-""
-""
-""
-
-# -----------------------------------------------------------------------------
-
-st.subheader("Best sellers", divider="orange")
-
-""
-""
-
-st.altair_chart(
-    alt.Chart(df)
-    .mark_bar(orient="horizontal")
-    .encode(
-        x="units_sold",
-        y=alt.Y("item_name").sort("-x"),
-    ),
-    use_container_width=True,
-)
+st.sidebar.caption("Clinic Inventory • Built with Streamlit")
